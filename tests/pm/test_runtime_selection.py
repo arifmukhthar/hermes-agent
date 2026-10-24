@@ -219,3 +219,26 @@ def test_invalid_selected_environment_never_silently_falls_back(tmp_path, monkey
     }))
     with pytest.raises(RuntimeError, match="environment"):
         runtime_paths.selected_venv(root)
+
+
+def test_source_checkout_keeps_its_own_dependencies_instead_of_the_sealed_payload(tmp_path, monkeypatch):
+    """A source checkout owns its venv; it is not a sealed payload and must not read one.
+
+    The checkout sits beside the install root, so the sealed-payload manifest lookup resolves to
+    the data root's own ``manifest.json`` -- Hermes state the launch is not allowed to touch. A
+    source checkout falls through to "keep the interpreter's own packages" like a payloadless one.
+    """
+    from pm import environments as runtime_paths
+
+    root = tmp_path / "hermes-agent"
+    root.mkdir()
+    (root / ".git").mkdir()
+    (root / "pyproject.toml").write_text("[project]\nname = 'hermes-agent'\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+
+    consulted = []
+    monkeypatch.setattr("pm.environments.payload_venv", lambda repo: consulted.append(repo) or Path("/nowhere"))
+
+    runtime_paths.activate_dependencies(root)
+
+    assert consulted == []
