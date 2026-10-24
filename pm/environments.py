@@ -479,6 +479,11 @@ def activate_dependencies(project_root: Path) -> None:
             selected = site_packages(environment)
             if not selected.is_dir() and not runtime_facts_path(project_root).is_file():
                 return
+    elif (Path(project_root) / ".git").exists():
+        # A source checkout owns its venv (the pre-PM in-tree venv, a dev `.venv`): only a sealed
+        # payload ships one. A checkout sits beside the install root, so consulting the sealed
+        # payload manifest would read the data root's own manifest for a tree that is not a payload.
+        return _require_own_dependencies(project_root)
     else:
         # Sealed payloads still select once, before imports.
         # Never consult VIRTUAL_ENV: it can describe the invoking shell's Python.

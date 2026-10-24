@@ -44,6 +44,10 @@ def _wire(provider, base_url, model="m", rejected=()):
     ("novita", "https://api.novita.ai/openai/v1", "m", {"reasoning_content", "reasoning_details"}),
     ("ollama-cloud", "https://ollama.com/v1", "m", {"reasoning_content", "reasoning"}),
     ("custom", "http://127.0.0.1:8080/v1", "m", {"reasoning_content", "reasoning"}),
+    # Recursive Flint / Rec (#136486): one reasoning field per message. Scoped to the model, not
+    # the endpoint, so the port is not part of the contract and other local lanes keep below.
+    ("custom", "http://127.0.0.1:11500/v1", "flint", {"reasoning_content"}),
+    ("custom", "http://127.0.0.1:12345/v1", "flint", {"reasoning_content"}),
     # everyone else: the de-facto standard alias
     ("zai", "https://api.z.ai/api/paas/v4", "glm-5.3", {"reasoning_content"}),
     ("openai-api", "https://api.openai.com/v1", "gpt-5", {"reasoning_content"}),
@@ -57,6 +61,30 @@ def test_each_route_gets_exactly_the_carriers_it_reads(provider, base_url, model
     # A reasoning-less turn is never padded outside the must-echo tier.
     assert "reasoning_content" not in bare
     assert _TURN["reasoning_details"] is _DETAILS and "reasoning" in _TURN  # history untouched
+
+
+def test_recursive_flint_single_carrier_keeps_tool_call_history_valid():
+    """#136486: Rec/Flint serves one reasoning field per message, including the post-tool-call
+    follow-up turn. The wire copy of a stored tool-call turn must carry only the canonical
+    ``reasoning_content`` alias, not a duplicate ``reasoning``/``reasoning_details`` carrier."""
+    turn, bare = _wire("custom", "http://127.0.0.1:11500/v1", "flint")
+    assert {k for k in ("reasoning_content", "reasoning", "reasoning_details") if k in turn} == {"reasoning_content"}
+    assert turn["reasoning_content"] == "thought"
+    assert "reasoning" not in turn and "reasoning_details" not in turn
+    # A reasoning-less turn is still never padded outside the must-echo tier.
+    assert "reasoning_content" not in bare
+    route = reasoning_replay_route("chat_completions", "custom", "flint", "http://127.0.0.1:11500/v1")
+    assert route.carriers == frozenset({"reasoning_content"})
+    assert route.pad is False
+
+
+def test_other_local_custom_providers_keep_the_dual_carrier_fallback():
+    """Backward compatibility: a custom OpenAI-compatible local lane that is not Flint keeps the
+    dual-carrier fallback, whatever its (unusual) port."""
+    turn, _ = _wire("custom", "http://127.0.0.1:8080/v1", "m")
+    assert {k for k in ("reasoning_content", "reasoning", "reasoning_details") if k in turn} == {"reasoning_content", "reasoning"}
+    route = reasoning_replay_route("chat_completions", "custom", "m", "http://127.0.0.1:8080/v1")
+    assert route.carriers == frozenset({"reasoning_content", "reasoning"})
 
 
 def test_must_echo_pads_and_aliased_gemini_keeps_its_signature():
